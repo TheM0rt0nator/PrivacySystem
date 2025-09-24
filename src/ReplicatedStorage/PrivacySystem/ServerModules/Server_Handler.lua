@@ -86,6 +86,9 @@ function PrivacySystemServer:_setupZone(zone: Part): ()
 	if offset then
 		serverValidationPart:PivotTo(zone.CFrame + offset)
 	end
+
+	zone.CanCollide = false
+	zone.Anchored = true
 	
 	local zoneInfo = {
 		zone = zone;
