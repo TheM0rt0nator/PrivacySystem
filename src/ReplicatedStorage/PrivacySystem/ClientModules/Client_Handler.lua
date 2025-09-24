@@ -4,6 +4,12 @@ local Players = game:GetService('Players')
 local Config = require(script.Parent.Parent.Config)
 local Zone = require(script.Parent.Parent.Libraries.Zone)
 
+type ZoneData = {
+	zonePart: Part,
+	zoneObj: any,
+	claimed: boolean?
+}
+
 local REMOTES = script.Parent.Parent:WaitForChild('Remotes')
 
 local zoneClaimedEvent = REMOTES:WaitForChild('ZoneClaimed')
@@ -15,8 +21,8 @@ local unclaimZoneFunc = REMOTES:WaitForChild('UnclaimZone')
 local player = Players.LocalPlayer
 
 local PrivacySystemClient = {}
-local SetupZones = {}
-local InZones = {}
+local SetupZones: {[string]: ZoneData} = {}
+local InZones: {[string]: boolean} = {}
 
 local function claimZone(zoneId: string): boolean
 	local success = claimZoneFunc:InvokeServer(zoneId)
@@ -27,7 +33,7 @@ local function claimZone(zoneId: string): boolean
 	return success
 end
 
-function PrivacySystemClient:_setupZones(zones: {}): nil
+function PrivacySystemClient:_setupZones(zones: {Part}): ()
 	task.delay(1, function()
 		for _, zonePart in zones do
 			local zoneId = zonePart:GetAttribute('ZoneID')
@@ -73,7 +79,7 @@ function PrivacySystemClient:_setupZones(zones: {}): nil
 	end)
 end
 
-function PrivacySystemClient:_destroyZones(zones: {}): nil
+function PrivacySystemClient:_destroyZones(zones: {Part}): ()
 	for _, zonePart in zones do
 		local zoneId = zonePart:GetAttribute('ZoneID')
 		if not zoneId then warn('Failed to destroy zone, no id found') end
@@ -85,14 +91,14 @@ function PrivacySystemClient:_destroyZones(zones: {}): nil
 	end
 end
 
-function PrivacySystemClient:_zoneClaimed(zoneId: string): nil
+function PrivacySystemClient:_zoneClaimed(zoneId: string): ()
 	if not SetupZones[zoneId] then return end
 	
 	SetupZones[zoneId].claimed = true
 	SetupZones[zoneId].zonePart.CanCollide = true
 end
 
-function PrivacySystemClient:_zoneUnclaimed(zoneId: string): nil
+function PrivacySystemClient:_zoneUnclaimed(zoneId: string): ()
 	if not SetupZones[zoneId] then return end
 
 	SetupZones[zoneId].claimed = false
@@ -103,7 +109,7 @@ function PrivacySystemClient:_zoneUnclaimed(zoneId: string): nil
 	end
 end
 
-function PrivacySystemClient:initiate(): nil
+function PrivacySystemClient:initiate(): ()
 	local zones = CollectionService:GetTagged(Config.ZONE_TAG)
 	if zones and next(zones) then
 		self:_setupZones(zones)

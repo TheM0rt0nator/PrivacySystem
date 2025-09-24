@@ -1,8 +1,16 @@
 local CollectionService = game:GetService('CollectionService')
 local HttpService = game:GetService('HttpService')
 local Players = game:GetService('Players')
+local RunService = game:GetService('RunService')
 
 local Config = require(script.Parent.Parent.Config)
+
+type ZoneInfo = {
+	zone: Part,
+	serverValidationPart: Part,
+	claimed: Player | boolean,
+	claiming: boolean?
+}
 
 local REMOTES = script.Parent.Parent:FindFirstChild('Remotes')
 if not REMOTES then
@@ -11,7 +19,7 @@ if not REMOTES then
 	REMOTES.Parent = script.Parent.Parent
 end
 
-local function createRemote(remoteType: string, remoteName: string): RemoteEvent
+local function createRemote(remoteType: string, remoteName: string): Instance
 	local newRemote = Instance.new(remoteType)
 	newRemote.Name = remoteName
 	newRemote.Parent = REMOTES
@@ -27,9 +35,9 @@ local zoneUnclaimedEvent = createRemote('RemoteEvent', 'ZoneUnclaimed')
 
 local PrivacySystemServer = {}
 
-local setupZones = {}
+local setupZones: {[string]: ZoneInfo} = {}
 
-local function createCustomZones(): nil
+local function createCustomZones(): ()
 	local newZones = {}
 	
 	-- add any custom code here to create your zones
@@ -58,13 +66,13 @@ local function createCustomZones(): nil
 	end
 end
 
-function PrivacySystemServer:_getZones(): {}
+function PrivacySystemServer:_getZones(): {Part}
 	createCustomZones()
 	
 	return CollectionService:GetTagged(Config.ZONE_TAG)
 end
 
-function PrivacySystemServer:_setupZone(zone: Part): {}
+function PrivacySystemServer:_setupZone(zone: Part): ()
 	local serverValidationPart = Instance.new("Part")
 	serverValidationPart.Name = "ServerValidationZone"
 	serverValidationPart.Anchored = true
@@ -91,7 +99,7 @@ function PrivacySystemServer:_setupZone(zone: Part): {}
 	setupZones[zoneId] = zoneInfo
 end
 
-function PrivacySystemServer:_getSetupZones(): {}
+function PrivacySystemServer:_getSetupZones(): {[string]: ZoneInfo}
 	return setupZones
 end
 
@@ -123,29 +131,36 @@ function PrivacySystemServer:_claimZone(player: Player, zoneId: string): boolean
 	end
 	
 	local zoneInfo = setupZones[zoneId]
-	if zoneInfo.claimed or zoneInfo.claiming then return false end
+	if zoneInfo.claimed 
+		or zoneInfo.claiming 
+		or not zoneInfo.zone 
+		or zoneInfo.zone.Parent == nil 
+		or not zoneInfo.serverValidationPart 
+		or zoneInfo.serverValidationPart.Parent == nil 
+	then 
+		return false 
+	end
 	
 	zoneInfo.claiming = true
 	
-	local success, result = pcall(function()
-		local isCloseEnough = self:_checkPlayerProximity(player, zoneInfo.serverValidationPart)
-		if not isCloseEnough then 
-			zoneInfo.claiming = false
-			return false 
-		end
-		
-		return true
+	local success, isCloseEnough = pcall(function()
+		return self:_checkPlayerProximity(player, zoneInfo.serverValidationPart)
 	end)
-	
+
 	if not success then
-		warn('Failed to claim zone due to error: ', result)
+		zoneInfo.claiming = false
+		warn("Failed to claim zone due to error: ", isCloseEnough)
 		return false
-	elseif success and not result then
+	end
+
+	if not isCloseEnough then
+		zoneInfo.claiming = false
 		return false
 	end
 	
 	zoneInfo.claimed = player
 	zoneInfo.claiming = false
+	
 	zoneInfo.zone:SetAttribute('Claimed', true)
 	
 	for _, otherPlayer in Players:GetPlayers() do
@@ -178,11 +193,97 @@ function PrivacySystemServer:_unclaimZone(player: Player, zoneId: string): boole
 	return true
 end
 
-function PrivacySystemServer:_onPlayerRemoving(player: Player): nil
+function PrivacySystemServer:_onPlayerRemoving(player: Player): ()
 	for zoneId, zoneInfo in setupZones do
 		if zoneInfo and zoneInfo.claimed ~= player then continue end
 		
 		self:_unclaimZone(player, zoneId)
+	end
+end
+
+function PrivacySystemServer:_getPlayersInZone(zoneInfo: ZoneInfo): {Player}
+	local playersInZone = {}
+	local foundPlayers = {}
+	
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Include
+	local filterDescendantsInstances = {}
+	
+	for _, player in Players:GetPlayers() do
+		local char = player.Character
+		if not char or not char:FindFirstChild('HumanoidRootPart') then continue end
+
+		pcall(function()
+			table.insert(filterDescendantsInstances, char.HumanoidRootPart)
+		end)
+	end
+
+	overlapParams.FilterDescendantsInstances = filterDescendantsInstances
+	
+	if #overlapParams.FilterDescendantsInstances == 0 then
+		return playersInZone
+	end
+	
+	local partsInZone = workspace:GetPartsInPart(zoneInfo.zone, overlapParams)
+	
+	for _, part in partsInZone do
+		if part.Name ~= 'HumanoidRootPart' then continue end
+		
+		local player = Players:GetPlayerFromCharacter(part.Parent)
+		if player and not foundPlayers[player] then
+			foundPlayers[player] = true
+			table.insert(playersInZone, player)
+		end
+	end
+	
+	return playersInZone
+end
+
+function PrivacySystemServer:_shiftPlayerOut(player: Player, zoneInfo: ZoneInfo): ()
+	local char = player.Character
+	if not char then return end
+	
+	local hrp = char:FindFirstChild('HumanoidRootPart')
+	if not hrp then return end
+	
+	local zoneCFrame = zoneInfo.zone.CFrame
+	local zoneSize = zoneInfo.zone.Size
+	local playerPos = hrp.Position
+	local zonePos = zoneCFrame.Position
+	
+	local direction = (playerPos - zonePos)
+	if direction.Magnitude == 0 then
+		direction = Vector3.new(0, 0, 1)
+	else
+		direction = direction.Unit
+	end
+	
+	local halfSize = zoneSize * 0.5
+	local localDirection = zoneCFrame:VectorToObjectSpace(direction)
+	
+	local xTime = math.abs(localDirection.X) > 0 and halfSize.X / math.abs(localDirection.X) or math.huge
+	local zTime = math.abs(localDirection.Z) > 0 and halfSize.Z / math.abs(localDirection.Z) or math.huge
+	
+	local minTime = math.min(xTime, zTime)
+	local exitPoint = zonePos + (direction * minTime)
+	
+	local safeDistance = 3
+	local newPosition = exitPoint + (direction * safeDistance)
+	newPosition = Vector3.new(newPosition.X, playerPos.Y, newPosition.Z)
+	
+	hrp.CFrame = CFrame.new(newPosition, hrp.CFrame.LookVector)
+end
+
+function PrivacySystemServer:_checkZoneIntruders(): ()
+	for _zoneId, zoneInfo in setupZones do
+		if not zoneInfo.claimed or typeof(zoneInfo.claimed) == 'boolean' then continue end
+		
+		local playersInZone = self:_getPlayersInZone(zoneInfo)
+		for _, player in playersInZone do
+			if not zoneInfo.claimed or player == zoneInfo.claimed then continue end
+
+			self:_shiftPlayerOut(player, zoneInfo)
+		end
 	end
 end
 
@@ -220,6 +321,15 @@ function PrivacySystemServer:initiate()
 	
 	Players.PlayerRemoving:Connect(function(...)
 		self:_onPlayerRemoving(...)
+	end)
+	
+	local lastCheck = 0
+	RunService.Heartbeat:Connect(function()
+		local currentTime = os.clock()
+		if currentTime - lastCheck >= Config.ZONE_CHECK_INTERVAL then
+			lastCheck = currentTime
+			self:_checkZoneIntruders()
+		end
 	end)
 end
 
