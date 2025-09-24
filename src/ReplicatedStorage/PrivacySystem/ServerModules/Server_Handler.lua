@@ -165,6 +165,15 @@ function PrivacySystemServer:_claimZone(player: Player, zoneId: string): boolean
 	zoneInfo.claiming = false
 	
 	zoneInfo.zone:SetAttribute('Claimed', true)
+
+	pcall(function()
+		local playersInZone = self:_getPlayersInZone(zoneInfo)
+		for _, otherPlayer in playersInZone do
+			if otherPlayer == player then continue end
+			
+			self:_shiftPlayerOut(otherPlayer, zoneInfo)
+		end
+	end)
 	
 	for _, otherPlayer in Players:GetPlayers() do
 		if otherPlayer == player then continue end

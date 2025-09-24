@@ -48,6 +48,10 @@ function PrivacySystemClient:_setupZones(zones: {Part}): ()
 			detectionPart.Transparency = 1
 			detectionPart.Size = zonePart:GetAttribute('Client_Detection_Size') or zonePart.Size * Config.CLIENT_DETECTION_MULTI
 			detectionPart.Parent = zonePart
+
+			if detectionPart:FindFirstChild('ServerValidationZone') then
+				detectionPart:FindFirstChild('ServerValidationZone'):Destroy()
+			end
 			
 			local newZone = Zone.new(detectionPart)
 			newZone.playerEntered:Connect(function(enteredPlayer)
