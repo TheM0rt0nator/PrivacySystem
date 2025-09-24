@@ -40,6 +40,9 @@ function PrivacySystemClient:_setupZones(zones: {Part}): ()
 			if not zoneId then warn('No zone ID found for zone') end
 			
 			if SetupZones[zoneId] then continue end
+
+			zonePart.CanCollide = false
+			zonePart.Anchored = true
 			
 			local detectionPart = zonePart:Clone()
 			detectionPart.Name = "PrivacyDetectionZone"

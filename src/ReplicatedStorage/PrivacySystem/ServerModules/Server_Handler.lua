@@ -169,7 +169,7 @@ function PrivacySystemServer:_claimZone(player: Player, zoneId: string): boolean
 	pcall(function()
 		local playersInZone = self:_getPlayersInZone(zoneInfo)
 		for _, otherPlayer in playersInZone do
-			if otherPlayer == player then continue end
+			if otherPlayer == player or (zoneInfo.prevClaimed and otherPlayer.UserId == zoneInfo.prevClaimed.playerId) then continue end
 			
 			self:_shiftPlayerOut(otherPlayer, zoneInfo)
 		end
@@ -193,6 +193,10 @@ function PrivacySystemServer:_unclaimZone(player: Player, zoneId: string): boole
 	local zoneInfo = setupZones[zoneId]
 	if not zoneInfo.claimed or player ~= zoneInfo.claimed then return false end
 	
+	zoneInfo.prevClaimed = {
+		playerId = zoneInfo.claimed.UserId;
+		unclaimedTime = os.clock();
+	}
 	zoneInfo.claimed = false
 	zoneInfo.zone:SetAttribute('Claimed', false)
 	
@@ -289,10 +293,20 @@ end
 function PrivacySystemServer:_checkZoneIntruders(): ()
 	for _zoneId, zoneInfo in setupZones do
 		if not zoneInfo.claimed or typeof(zoneInfo.claimed) == 'boolean' then continue end
+
+		local currentTime = os.clock()
 		
 		local playersInZone = self:_getPlayersInZone(zoneInfo)
 		for _, player in playersInZone do
-			if not zoneInfo.claimed or player == zoneInfo.claimed then continue end
+			if not zoneInfo.claimed 
+				or player == zoneInfo.claimed 
+				or (zoneInfo.prevClaimed 
+					and player.UserId == zoneInfo.prevClaimed.playerId 
+					and currentTime - zoneInfo.prevClaimed.unclaimedTime < 1
+				) 
+			then 
+				continue 
+			end
 
 			self:_shiftPlayerOut(player, zoneInfo)
 		end
